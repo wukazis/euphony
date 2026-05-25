@@ -63,9 +63,23 @@ export interface BlockContent {
   editableHTML?: TemplateResult;
 }
 
+export interface CodexSessionSummary {
+  path: string;
+  load_url: string;
+  first_message: string;
+  timestamp: string | null;
+  age_seconds: number | null;
+  event_count: number;
+}
+
 export interface BlobJSONLPayload {
   total: number;
-  data: string[] | Conversation[] | Record<string, unknown>[];
+  data:
+    | string[]
+    | Conversation[]
+    | Record<string, unknown>[]
+    | unknown[][]
+    | CodexSessionSummary[];
   isFiltered: boolean;
   matchedCount: number;
   resolvedURL: string;
@@ -75,7 +89,12 @@ export interface BlobJSONLResponse {
   offset: number;
   limit: number;
   total: number;
-  data: string[] | Conversation[] | Record<string, Conversation | string>[];
+  data:
+    | string[]
+    | Conversation[]
+    | Record<string, Conversation | string>[]
+    | unknown[][]
+    | CodexSessionSummary[];
   isFiltered: boolean;
   matchedCount: number;
   resolvedURL: string;

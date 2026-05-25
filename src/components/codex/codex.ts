@@ -32,6 +32,9 @@ export class EuphonyCodex extends LitElement {
   @property({ type: String, attribute: 'conversation-style' })
   conversationStyle = '';
 
+  @property({ type: Boolean, attribute: 'preview-mode' })
+  previewMode = false;
+
   @property({ type: Boolean, attribute: 'should-render-markdown' })
   shouldRenderMarkdown = false;
 
@@ -159,6 +162,11 @@ export class EuphonyCodex extends LitElement {
       `;
     }
 
+    const focusModeAuthor =
+      this.previewMode && this.focusModeAuthor.length === 0
+        ? ['user', 'assistant']
+        : this.focusModeAuthor;
+
     return html`
       <div class="codex-wrapper">
         <euphony-conversation
@@ -170,7 +178,7 @@ export class EuphonyCodex extends LitElement {
           )}
           ?should-render-markdown=${this.shouldRenderMarkdown}
           ?is-showing-metadata=${this.isShowingMetadata}
-          .focusModeAuthor=${this.focusModeAuthor}
+          .focusModeAuthor=${focusModeAuthor}
           .focusModeRecipient=${this.focusModeRecipient}
           .focusModeContentType=${this.focusModeContentType}
           ?disable-markdown-button=${this.disableMarkdownButton}

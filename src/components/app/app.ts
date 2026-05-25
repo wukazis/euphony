@@ -5,6 +5,7 @@ import { customElement, property, query, state } from 'lit/decorators.js';
 import { ifDefined } from 'lit/directives/if-defined.js';
 import { unsafeHTML } from 'lit/directives/unsafe-html.js';
 import type {
+  CodexSessionSummary,
   HarmonyRenderRequest,
   MessageSharingRequest,
   RefreshRendererListRequest,
@@ -40,6 +41,7 @@ import { URLManager } from './url-manager';
 import '@shoelace-style/shoelace/dist/components/copy-button/copy-button.js';
 import '@shoelace-style/shoelace/dist/components/input/input.js';
 import shoelaceCSS from '@shoelace-style/shoelace/dist/themes/light.css?inline';
+import iconArrowRight from '../../images/icon-arrow-right.svg?raw';
 import iconArrowUp from '../../images/icon-arrow-up.svg?raw';
 import iconInfo from '../../images/icon-burger.svg?raw';
 import iconCache from '../../images/icon-cache.svg?raw';
@@ -74,11 +76,13 @@ export interface ToastMessage {
 enum DataType {
   CONVERSATION = 'conversation',
   CODEX = 'codex',
+  CODEX_SESSION_INDEX = 'codex-session-index',
   JSON = 'json'
 }
 
 type MenuItems =
   | 'Load without cache'
+  | 'Load Codex sessions'
   | 'Load from clipboard'
   | 'Load local file'
   | 'Editor mode'
@@ -100,6 +104,8 @@ const TOAST_DURATIONS: Record<ToastType, number> = {
 
 type ConversationViewerElement = EuphonyConversation | EuphonyCodex;
 
+const CODEX_SESSIONS_PATH = 'codex:sessions';
+const CODEX_SESSION_PATH_PREFIX = 'codex:session:';
 let initURL = '';
 
 // Check if the URL has query parameters
@@ -115,6 +121,61 @@ const messageIndexString: string | null = urlParams.get('subindex');
 const messageIndex: number | null = messageIndexString
   ? parseInt(messageIndexString)
   : null;
+
+const isCodexSessionCollection = (data: unknown[]): data is unknown[][] =>
+  data.every(item => Array.isArray(item) && isCodexSessionJSONL(item));
+
+const isRecord = (data: unknown): data is Record<string, unknown> =>
+  typeof data === 'object' && data !== null;
+
+const isCodexSessionSummary = (data: unknown): data is CodexSessionSummary => {
+  if (!isRecord(data)) {
+    return false;
+  }
+  return (
+    typeof data.path === 'string' &&
+    typeof data.load_url === 'string' &&
+    typeof data.first_message === 'string' &&
+    (typeof data.timestamp === 'string' || data.timestamp === null) &&
+    (typeof data.age_seconds === 'number' || data.age_seconds === null) &&
+    typeof data.event_count === 'number'
+  );
+};
+
+const isCodexSessionSummaryCollection = (
+  data: unknown[]
+): data is CodexSessionSummary[] =>
+  data.every(item => isCodexSessionSummary(item));
+
+const isSingleCodexSessionPath = (path: string | null) =>
+  path?.startsWith(CODEX_SESSION_PATH_PREFIX) ?? false;
+
+const formatRelativeAge = (ageSeconds: number | null) => {
+  if (ageSeconds === null || !Number.isFinite(ageSeconds)) {
+    return 'unknown time';
+  }
+  if (ageSeconds < 60) {
+    return 'just now';
+  }
+
+  const units = [
+    { seconds: 60 * 60 * 24 * 365, label: 'year' },
+    { seconds: 60 * 60 * 24 * 30, label: 'month' },
+    { seconds: 60 * 60 * 24, label: 'day' },
+    { seconds: 60 * 60, label: 'hour' },
+    { seconds: 60, label: 'minute' }
+  ];
+
+  for (const unit of units) {
+    const value = Math.floor(ageSeconds / unit.seconds);
+    if (value >= 1) {
+      return `${value} ${unit.label}${value === 1 ? '' : 's'} ago`;
+    }
+  }
+
+  return 'just now';
+};
+
 if (conversationIndex !== null) {
   urlHash = `#conversation-${conversationIndex}`;
   window.location.hash = urlHash;
@@ -140,6 +201,9 @@ export class EuphonyApp extends LitElement {
 
   @state()
   codexSessionData: unknown[][] = [];
+
+  @state()
+  codexSessionSummaries: CodexSessionSummary[] = [];
 
   @state()
   dataType: DataType = DataType.CONVERSATION;
@@ -454,42 +518,16 @@ export class EuphonyApp extends LitElement {
     }
 
     if (blobPath === null) {
-      // User doesn't provide a JSON path in the URL, we use default demo data
-      const response = await fetch('examples/euphony-convo-100.jsonl');
-      const responseText = await response.text();
-      const conversationList: string[] = responseText
-        .split('\n')
-        .filter(d => d !== '');
-
       this.dataType = DataType.CONVERSATION;
-      this.allConversationData = conversationList.map(item => {
-        const parsed = parseConversationJSONString(item);
-        if (parsed === null) {
-          throw new Error('Failed to parse conversation JSON string');
-        }
-        return parsed;
-      });
-      console.log(this.allConversationData);
-
-      // Set all the conversations as selected in editor mode
-      if (this.isEditorMode) {
-        this.selectedConversationIDs = new Set();
-        for (let i = 0; i < conversationList.length; i++) {
-          this.selectedConversationIDs.add(i);
-        }
-      }
-
-      this._totalConversationSize = this.allConversationData.length;
-
-      if (this.curPage > this.totalPageNum) {
-        console.error('The conversation index is out of bound.');
-        this.curPage = 1;
-      }
-
-      this.conversationData = this.allConversationData.slice(
-        (this.curPage - 1) * this.itemsPerPage,
-        this.curPage * this.itemsPerPage
-      );
+      this.allConversationData = [];
+      this.conversationData = [];
+      this.JSONData = [];
+      this.codexSessionData = [];
+      this.codexSessionSummaries = [];
+      this.selectedConversationIDs = new Set();
+      this._totalConversationSize = 0;
+      this._totalConversationSizeIncludingUnfiltered = 0;
+      this.curPage = 1;
       this.isLoadingData = false;
     } else {
       initURL = blobPath;
@@ -705,6 +743,22 @@ export class EuphonyApp extends LitElement {
     this.urlManager.updateURL();
   }
 
+  async loadCodexSessionsClicked() {
+    const inputElement = this.shadowRoot?.querySelector('sl-input');
+    if (inputElement) {
+      inputElement.value = CODEX_SESSIONS_PATH;
+    }
+    await this.loadButtonClicked();
+  }
+
+  async openCodexSessionSummary(summary: CodexSessionSummary) {
+    const inputElement = this.shadowRoot?.querySelector('sl-input');
+    if (inputElement) {
+      inputElement.value = summary.load_url;
+    }
+    await this.loadButtonClicked();
+  }
+
   pageClicked(e: CustomEvent<number>) {
     this.updatePageNumber(e.detail, true).then(
       () => {},
@@ -807,6 +861,13 @@ export class EuphonyApp extends LitElement {
       }
       case 'Load without cache': {
         this.loadButtonClicked({ noCache: true }).then(
+          () => {},
+          () => {}
+        );
+        break;
+      }
+      case 'Load Codex sessions': {
+        this.loadCodexSessionsClicked().then(
           () => {},
           () => {}
         );
@@ -1329,10 +1390,7 @@ export class EuphonyApp extends LitElement {
     }
   };
 
-  loadDataFromText = (
-    sourceText: string,
-    sourceName: 'clipboard' | 'file'
-  ) => {
+  loadDataFromText = (sourceText: string, sourceName: 'clipboard' | 'file') => {
     this.curPage = 1;
     this.resetHash();
     const requestID = this.localDataWorkerRequestID;
@@ -1387,6 +1445,7 @@ export class EuphonyApp extends LitElement {
         this.isLoadingData = false;
 
         this.codexSessionData = [];
+        this.codexSessionSummaries = [];
         this.allConversationData = [];
         this.conversationData = [];
         this.JSONData = [];
@@ -1513,13 +1572,17 @@ export class EuphonyApp extends LitElement {
     this.isLoadingData = true;
     this.isLoadingFromClipboard = false;
     this.codexSessionData = [];
+    this.codexSessionSummaries = [];
     let loadedURL = blobURL;
     const toastMessages = [];
 
     try {
-      const curAPIManager = this.isFrontendOnlyMode
-        ? this.browserAPIManager
-        : this.apiManager;
+      const curAPIManager =
+        this.isFrontendOnlyMode &&
+        blobURL !== CODEX_SESSIONS_PATH &&
+        !blobURL.startsWith(CODEX_SESSION_PATH_PREFIX)
+          ? this.browserAPIManager
+          : this.apiManager;
 
       const { data, total, matchedCount, resolvedURL } =
         await curAPIManager.getJSONL({
@@ -1546,6 +1609,72 @@ export class EuphonyApp extends LitElement {
       // early before any follow-up rendering or pagination work.
       blobPath = blobURL;
 
+      if (isCodexSessionSummaryCollection(data as unknown[])) {
+        this.codexSessionSummaries = data as CodexSessionSummary[];
+        this.allConversationData = [];
+        this.conversationData = [];
+        this.JSONData = [];
+        this.codexSessionData = [];
+        this.selectedConversationIDs = new Set();
+        this.dataType = DataType.CODEX_SESSION_INDEX;
+        this._totalConversationSize = matchedCount;
+        this._totalConversationSizeIncludingUnfiltered = total;
+        this.isLoadingData = false;
+        this.isLoadingFromCache = !noCache;
+
+        if (urlHash === '') {
+          this.scrollToTop(0);
+        }
+
+        if (showSuccessToast) {
+          toastMessages.push(`Loaded ${matchedCount} Codex sessions`);
+          this.toastMessage = toastMessages.join('\n\n');
+          this.toastType = 'success';
+          if (this.toastComponent) {
+            this.toastComponent.show();
+          }
+        }
+
+        return {
+          isLoadDataSuccessful: true,
+          loadDataMessage: toastMessages.join('\n\n'),
+          loadedURL: loadedURL
+        };
+      }
+
+      if (isCodexSessionCollection(data as unknown[])) {
+        this.codexSessionData = data as unknown[][];
+        this.allConversationData = [];
+        this.conversationData = [];
+        this.JSONData = [];
+        this.codexSessionSummaries = [];
+        this.selectedConversationIDs = new Set();
+        this.dataType = DataType.CODEX;
+        this._totalConversationSize = matchedCount;
+        this._totalConversationSizeIncludingUnfiltered = total;
+        this.isLoadingData = false;
+        this.isLoadingFromCache = !noCache;
+
+        if (urlHash === '') {
+          this.scrollToTop(0);
+        }
+
+        if (showSuccessToast) {
+          toastMessages.push(`Loaded ${matchedCount} Codex sessions`);
+          this.toastMessage = toastMessages.join('\n\n');
+          this.toastType = 'success';
+          if (this.toastComponent) {
+            this.toastComponent.show();
+          }
+        }
+
+        return {
+          isLoadDataSuccessful: true,
+          loadDataMessage: toastMessages.join('\n\n'),
+          loadedURL: loadedURL
+        };
+      }
+
       // Codex sessions are JSONL event streams, not Harmony conversations.
       // Fetch the full event stream if the first page was truncated and route
       // the result to the Codex renderer.
@@ -1566,6 +1695,7 @@ export class EuphonyApp extends LitElement {
         this.allConversationData = [];
         this.conversationData = [];
         this.JSONData = [];
+        this.codexSessionSummaries = [];
         this.selectedConversationIDs = new Set();
         this.dataType = DataType.CODEX;
         this._totalConversationSize = 1;
@@ -1594,7 +1724,11 @@ export class EuphonyApp extends LitElement {
       }
 
       // Check if the data is valid
-      if (!this.validateConversation(data[0])) {
+      if (
+        !this.validateConversation(
+          data[0] as string | Conversation | Record<string, unknown>
+        )
+      ) {
         // If data is invalid conversation, we render it as JSON
         toastMessages.push(
           'Failed to find harmony-formatted data. Render JSON instead.'
@@ -1785,7 +1919,8 @@ export class EuphonyApp extends LitElement {
     let conversationList:
       | Conversation[]
       | Record<string, unknown>[]
-      | unknown[][];
+      | unknown[][]
+      | CodexSessionSummary[];
 
     // Use a switch statement to set conversationList based on dataType
     switch (this.dataType) {
@@ -1794,6 +1929,9 @@ export class EuphonyApp extends LitElement {
         break;
       case DataType.CODEX:
         conversationList = this.codexSessionData;
+        break;
+      case DataType.CODEX_SESSION_INDEX:
+        conversationList = this.codexSessionSummaries;
         break;
       case DataType.JSON:
         conversationList = this.JSONData;
@@ -1936,12 +2074,43 @@ export class EuphonyApp extends LitElement {
             }}
           ></euphony-conversation>
         `;
+      } else if (this.dataType === DataType.CODEX_SESSION_INDEX) {
+        const curCodexSessionSummary = conversation as CodexSessionSummary;
+        euphonyTemplate = html`
+          <button
+            class="codex-session-row"
+            @click=${() => {
+              this.openCodexSessionSummary(curCodexSessionSummary).then(
+                () => {},
+                () => {}
+              );
+            }}
+          >
+            <span class="codex-session-path">
+              ${curCodexSessionSummary.path}
+            </span>
+            <span class="codex-session-message">
+              ${curCodexSessionSummary.first_message}
+            </span>
+            <span class="codex-session-meta">
+              <span
+                >${formatRelativeAge(curCodexSessionSummary.age_seconds)}</span
+              >
+              <span
+                >${NUM_FORMATTER(curCodexSessionSummary.event_count)}
+                events</span
+              >
+            </span>
+          </button>
+        `;
       } else if (this.dataType === DataType.CODEX) {
         const curCodexSession = conversation as unknown[];
+        const isCodexSessionsOverview = blobPath === CODEX_SESSIONS_PATH;
         euphonyTemplate = html`
           <euphony-codex
             id="euphony-conversation-${curID}"
             .sessionData=${curCodexSession}
+            ?preview-mode=${isCodexSessionsOverview}
             conversation-label="Session"
             conversation-max-width=${ifDefined(
               this.isGridView ? undefined : '800'
@@ -2088,33 +2257,42 @@ export class EuphonyApp extends LitElement {
         `;
       }
 
+      const conversationIDTemplate =
+        this.dataType === DataType.CODEX_SESSION_INDEX
+          ? html``
+          : html`
+              <span class="conversation-id">
+                <span class="share-button"
+                  ><sl-copy-button
+                    value=${url}
+                    size="small"
+                    copy-label="Copy sharable conversation URL"
+                  ></sl-copy-button
+                ></span>
+                ${checkboxTemplate}
+                <a href=${`#conversation-${curID}`}>#${curID}</a>
+              </span>
+            `;
+
       conversationsTemplate = html`
         ${conversationsTemplate}
         <div
           class="conversation-container"
+          ?is-codex-preview=${this.dataType === DataType.CODEX &&
+          blobPath === CODEX_SESSIONS_PATH}
+          ?is-codex-session-index=${this.dataType ===
+          DataType.CODEX_SESSION_INDEX}
           id=${`conversation-${curID}`}
           tabindex="0"
         >
-          <span class="conversation-id">
-            <span class="share-button"
-              ><sl-copy-button
-                value=${url}
-                size="small"
-                copy-label="Copy sharable conversation URL"
-              ></sl-copy-button
-            ></span>
-            ${checkboxTemplate}
-            <a href=${`#conversation-${curID}`}>#${curID}</a>
-          </span>
-
-          ${euphonyTemplate}
+          ${conversationIDTemplate} ${euphonyTemplate}
         </div>
       `;
     }
 
     // Add a download button for editor mode
     let downloadButtonTemplate = html``;
-    if (this.isEditorMode) {
+    if (this.isEditorMode && this.dataType !== DataType.CODEX_SESSION_INDEX) {
       downloadButtonTemplate = html`
         <button
           class="button-load"
@@ -2129,7 +2307,7 @@ export class EuphonyApp extends LitElement {
 
     // Add a select all button for editor mode
     let selectAllButtonTemplate = html``;
-    if (this.isEditorMode) {
+    if (this.isEditorMode && this.dataType !== DataType.CODEX_SESSION_INDEX) {
       selectAllButtonTemplate = html`
         <button
           class="select-all-button"
@@ -2231,6 +2409,25 @@ export class EuphonyApp extends LitElement {
         </div> `;
     }
 
+    const backToCodexSessionsTemplate = isSingleCodexSessionPath(blobPath)
+      ? html`
+          <button
+            class="button button-back-to-sessions"
+            @click=${() => {
+              this.loadCodexSessionsClicked().then(
+                () => {},
+                () => {}
+              );
+            }}
+          >
+            <span class="svg-icon back-icon"
+              >${unsafeHTML(iconArrowRight)}</span
+            >
+            <span>Sessions</span>
+          </button>
+        `
+      : html``;
+
     return html`
       <div
         class="app"
@@ -2319,9 +2516,10 @@ export class EuphonyApp extends LitElement {
               this.localFileInputChanged(e);
             }}
           />
+          ${backToCodexSessionsTemplate}
           <sl-input
             size="small"
-            placeholder="Public JSON or JSONL URL"
+            placeholder="Public JSON/JSONL URL or codex:sessions"
             value=${initURL}
             clearable
             spellcheck="false"
@@ -2407,6 +2605,10 @@ export class EuphonyApp extends LitElement {
                     icon: iconCache
                   },
                   {
+                    name: 'Load Codex sessions',
+                    icon: iconCode
+                  },
+                  {
                     name: 'Load from clipboard',
                     icon: iconClipboard
                   },
@@ -2462,7 +2664,12 @@ export class EuphonyApp extends LitElement {
                   : ''}
                 ${NUM_FORMATTER(this.totalConversationSize)}
                 ${this.jmespathQuery !== '' ? 'matched' : 'total'}
-                ${this.dataType === DataType.JSON ? 'items' : 'conversations'}
+                ${this.dataType === DataType.JSON
+                  ? 'items'
+                  : this.dataType === DataType.CODEX ||
+                      this.dataType === DataType.CODEX_SESSION_INDEX
+                    ? 'sessions'
+                    : 'conversations'}
                 ${this.jmespathQuery !== ''
                   ? `(${NUM_FORMATTER(this.totalConversationSizeIncludingUnfiltered)} total)`
                   : ''}
@@ -2470,7 +2677,11 @@ export class EuphonyApp extends LitElement {
               ${queryLabels}
             </div>
 
-            <div class="conversation-list" ?is-grid-view=${this.isGridView}>
+            <div
+              class="conversation-list"
+              ?is-grid-view=${this.isGridView &&
+              this.dataType !== DataType.CODEX_SESSION_INDEX}
+            >
               ${conversationsTemplate}
             </div>
 

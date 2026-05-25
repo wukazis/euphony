@@ -6,10 +6,6 @@ import type {
   RefreshRendererListResponse
 } from '../types/common-types';
 import type { Conversation } from '../types/harmony-types';
-import {
-  HARMONY_RENDERER_NAME,
-  renderHarmonyConversationInBrowser
-} from './harmony-render';
 
 export let EUPHONY_API_URL =
   (import.meta.env.VITE_EUPHONY_API_URL as string) || '/';
@@ -20,6 +16,7 @@ if (import.meta.env.DEV) {
 
 // The maximum number of lines in a JSONL file to read in frontend-only mode
 const FRONTEND_ONLY_MODE_MAX_LINES = 100;
+const BROWSER_HARMONY_RENDERER_NAME = 'o200k_harmony';
 class FileError extends Error {}
 
 const isConversation = (data: unknown) => {
@@ -251,7 +248,7 @@ export class APIManager {
     } else {
       const payload: BlobJSONLPayload = {
         total: response.total,
-        data: data as Conversation[] | string[],
+        data: data as BlobJSONLPayload['data'],
         isFiltered: response.isFiltered,
         matchedCount: response.matchedCount,
         resolvedURL: response.resolvedURL
@@ -636,13 +633,15 @@ Rules summary:
   }
 
   refreshRendererList = () => {
-    return [HARMONY_RENDERER_NAME];
+    return [BROWSER_HARMONY_RENDERER_NAME];
   };
 
-  harmonyRender = (
+  harmonyRender = async (
     conversation: string,
     renderer: string
-  ): HarmonyRenderResponse => {
+  ): Promise<HarmonyRenderResponse> => {
+    const { renderHarmonyConversationInBrowser } =
+      await import('./harmony-render');
     return renderHarmonyConversationInBrowser(conversation, renderer);
   };
 }
