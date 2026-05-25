@@ -37,6 +37,7 @@ structured chat data and Codex sessions in the browser.
 | Filtering and focus mode    | Filters datasets with JMESPath and narrows visible messages by role, recipient, or content type.                           |
 | Grid and editor modes       | Supports dataset skimming in grid view and direct JSONL editing in editor mode.                                            |
 | Harmony token rendering     | Shows Harmony renderer output, token IDs, decoded tokens, and rendered display strings.                                    |
+| Local Codex sessions index  | Scans local Codex history under `~/.codex/sessions`, shows a lightweight session list, and opens full sessions on demand.  |
 | Embeddable web components   | Ships reusable custom elements for integrating the viewer into other web apps in any framework (e.g., React, Svelte, Vue). |
 
 ## Get Started
@@ -113,6 +114,88 @@ The backend server is optional. It should only be used locally. Frontend-only mo
 - Set `VITE_EUPHONY_FRONTEND_ONLY=false` to use the local backend-assisted mode.
 
 The current backend includes a remote URL fetch path for loading JSON and JSONL data. If you host that backend on an external server, it can introduce SSRF risk because the server may be tricked into fetching attacker-controlled URLs. Therefore, only use the backend-assisted mode for local development.
+
+## Local Deployment
+
+This fork includes a local Codex session browser. It is intended to run on your own machine so the backend can read your local Codex history from `~/.codex/sessions`.
+
+### Requirements
+
+- Node.js and [pnpm](https://pnpm.io/)
+- Python 3.11+ with `venv`
+- Optional: an OpenAI API key only if you use backend translation
+
+### Install
+
+```bash
+git clone https://github.com/wukazis/euphony.git
+cd euphony
+
+pnpm install
+
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e .
+```
+
+### Run the Production Build Locally
+
+Build the frontend and serve it through the FastAPI backend:
+
+```bash
+pnpm run build
+. .venv/bin/activate
+uvicorn server.fastapi-main:app --host 127.0.0.1 --port 8020
+```
+
+Open:
+
+```text
+http://127.0.0.1:8020/
+```
+
+To open the local Codex sessions index directly:
+
+```text
+http://127.0.0.1:8020/?path=codex%3Asessions
+```
+
+The `codex:sessions` path scans:
+
+```text
+~/.codex/sessions/**/*.jsonl
+```
+
+Each session is shown as a lightweight row with its session path, first user message, relative time, and event count. Click a row to load the full session. On a full session page, use the `Sessions` button in the toolbar to return to the index.
+
+To read Codex sessions from another directory:
+
+```bash
+CODEX_SESSIONS_DIR=/path/to/sessions uvicorn server.fastapi-main:app --host 127.0.0.1 --port 8020
+```
+
+If you want backend translation, set either `OPENAI_API_KEY` or `OPEN_AI_API_KEY` before starting the backend.
+
+### Run in Development Mode
+
+Start the backend:
+
+```bash
+. .venv/bin/activate
+uvicorn server.fastapi-main:app --host 127.0.0.1 --port 8020 --reload
+```
+
+Start the Vite frontend in another terminal:
+
+```bash
+VITE_EUPHONY_FRONTEND_ONLY=false pnpm run dev
+```
+
+Open:
+
+```text
+http://127.0.0.1:3000/?path=codex%3Asessions
+```
 
 ## Development
 
