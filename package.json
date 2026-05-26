@@ -13,7 +13,7 @@
     }
   },
   "bin": {
-    "euphony": "./bin/euphony.js"
+    "euphony": "bin/euphony.js"
   },
   "files": [
     "bin",
@@ -32,13 +32,13 @@
   },
   "scripts": {
     "dev": "vite --port 3000",
-    "build": "tsc && vite build && vite build --mode server && vite build --mode library",
-    "build:app": "tsc && vite build && vite build --mode server",
+    "build": "tsc && tsc -p tsconfig.server.json && vite build && vite build --mode server && vite build --mode library",
+    "build:app": "tsc && tsc -p tsconfig.server.json && vite build && vite build --mode server",
     "build:frontend": "tsc && vite build",
     "build:frontend-only": "tsc && VITE_EUPHONY_FRONTEND_ONLY=true vite build",
     "build:github": "tsc && VITE_EUPHONY_FRONTEND_ONLY=true vite build --mode github",
     "build:library": "tsc && vite build --mode library",
-    "build:server": "vite build --mode server",
+    "build:server": "tsc -p tsconfig.server.json && vite build --mode server",
     "start": "node server-dist/node-main.js",
     "deploy:github": "pnpm run build:github && pnpm gh-pages -m \"Deploy $(git log '--format=format:%H' main -1)\" -d ./dist",
     "deploy": "pnpm run deploy:github",
