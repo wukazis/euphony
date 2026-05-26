@@ -93,6 +93,23 @@ export default defineConfig(async ({ command, mode }) => {
         };
       }
 
+      case 'server': {
+        return {
+          publicDir: false,
+          build: {
+            ssr: resolve(__dirname, 'server/node-main.ts'),
+            outDir: 'server-dist',
+            target: 'node20',
+            rollupOptions: {
+              output: {
+                entryFileNames: 'node-main.js',
+                chunkFileNames: 'chunks/[name].js'
+              }
+            }
+          }
+        };
+      }
+
       case 'library': {
         // Production: library that can be imported in other apps
         return {

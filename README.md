@@ -103,10 +103,10 @@ Euphony web components are customizable. For example, to style these components,
 
 Euphony can run in two modes:
 
-| Mode                  | What it is for                                                                                                                                                    |
-| :-------------------- | :---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Frontend-only mode    | Recommended for static or external hosting. URL loading happens in the browser, and translation uses a user-provided OpenAI API key when needed.                  |
-| Backend-assisted mode | Optional for local development. The FastAPI server supports remote JSON/JSONL loading, backend translation, and Harmony rendering. Useful to load large datasets. |
+| Mode                  | What it is for                                                                                                                                                                                    |
+| :-------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Frontend-only mode    | Recommended for static or external hosting. URL loading happens in the browser, and translation uses a user-provided OpenAI API key when needed.                                                  |
+| Backend-assisted mode | Optional for local development. The Node.js server supports remote JSON/JSONL loading, backend translation, Harmony rendering, and the local Codex sessions index. Useful to load large datasets. |
 
 The backend server is optional. It should only be used locally. Frontend-only mode is controlled with the Vite env variable `VITE_EUPHONY_FRONTEND_ONLY`.
 
@@ -117,12 +117,12 @@ The current backend includes a remote URL fetch path for loading JSON and JSONL 
 
 ## Local Deployment
 
-This fork includes a local Codex session browser. It is intended to run on your own machine so the backend can read your local Codex history from `~/.codex/sessions`.
+This fork includes a local Codex session browser. It is intended to run on your own machine so the Node backend can read your local Codex history from `~/.codex/sessions`.
 
 ### Requirements
 
-- Node.js and [pnpm](https://pnpm.io/)
-- Python 3.11+ with `venv`
+- Node.js 20+
+- npm or [pnpm](https://pnpm.io/)
 - Optional: an OpenAI API key only if you use backend translation
 
 ### Install
@@ -132,20 +132,20 @@ git clone https://github.com/wukazis/euphony.git
 cd euphony
 
 pnpm install
-
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -e .
+# or: npm install
 ```
 
 ### Run the Production Build Locally
 
-Build the frontend and serve it through the FastAPI backend:
+Build the frontend and Node backend, then start the local server:
 
 ```bash
 pnpm run build
-. .venv/bin/activate
-uvicorn server.fastapi-main:app --host 127.0.0.1 --port 8020
+pnpm start
+
+# npm users:
+# npm run build
+# npm start
 ```
 
 Open:
@@ -171,18 +171,35 @@ Each session is shown as a lightweight row with its session path, first user mes
 To read Codex sessions from another directory:
 
 ```bash
-CODEX_SESSIONS_DIR=/path/to/sessions uvicorn server.fastapi-main:app --host 127.0.0.1 --port 8020
+CODEX_SESSIONS_DIR=/path/to/sessions pnpm start
 ```
 
 If you want backend translation, set either `OPENAI_API_KEY` or `OPEN_AI_API_KEY` before starting the backend.
 
-### Run in Development Mode
-
-Start the backend:
+To use another host or port:
 
 ```bash
-. .venv/bin/activate
-uvicorn server.fastapi-main:app --host 127.0.0.1 --port 8020 --reload
+EUPHONY_HOST=127.0.0.1 PORT=8030 pnpm start
+```
+
+### Global Install Flow
+
+After publishing this package to npm, a machine can install and run it with:
+
+```bash
+npm install -g @wukazis/euphony
+euphony
+```
+
+That global command serves the bundled frontend from `dist/` and starts the Node backend from `server-dist/`.
+
+### Run in Development Mode
+
+Build and start the Node backend:
+
+```bash
+pnpm run build:app
+pnpm start
 ```
 
 Start the Vite frontend in another terminal:
@@ -206,7 +223,8 @@ Start the backend server:
 
 ```bash
 pnpm install
-uvicorn fastapi-main:app --app-dir server --host 127.0.0.1 --port 8020 --reload
+pnpm run build:app
+pnpm start
 ```
 
 Start the frontend development server:
@@ -226,16 +244,18 @@ Visit [http://localhost:3000/](http://localhost:3000/), you should see Euphony r
 To build the static frontend:
 
 ```bash
-pnpm run build
+pnpm run build:frontend
 python -m http.server -d ./dist
 ```
 
 To build a frontend-only static bundle:
 
 ```bash
-VITE_EUPHONY_FRONTEND_ONLY=true pnpm run build
+pnpm run build:frontend-only
 python -m http.server -d ./dist
 ```
+
+The older FastAPI backend is still available under `server/fastapi-main.py` for compatibility, but the packaged local app uses the Node backend.
 
 ## License
 
